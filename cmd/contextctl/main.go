@@ -412,14 +412,68 @@ func restoreContext(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *harness != "claude" {
-		return fmt.Errorf("unsupported harness %q; only claude is available in this demo", *harness)
+	store := localContextStore()
+	var result localcontext.RestoreResult
+	var next string
+	switch *harness {
+	case "claude":
+		return restoreClaudeContext(store, name, *project, *jsonOutput)
+	case "codex":
+		result, err = store.RestoreCodex(name, *project, codexHome())
+	case "opencode":
+		opencodeExecutable, lookupErr := exec.LookPath("opencode")
+		if lookupErr != nil {
+			return errors.New("opencode is not installed or not on PATH")
+		}
+		result, err = store.RestoreOpenCode(name, *project, opencodeExecutable)
+		next = "opencode"
+	case "pi":
+		result, err = store.RestorePi(name, *project, piAgentDir(), piSessionDir())
+		next = "pi --resume"
+	default:
+		return fmt.Errorf("unsupported harness %q; use claude, codex, opencode, or pi", *harness)
 	}
-	capture, destination, err := localContextStore().RestoreClaude(name, *project, claudeConfigHome())
 	if err != nil {
 		return err
 	}
 	if *jsonOutput {
+		encoded, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(encoded))
+		return nil
+	}
+	fmt.Printf("Restored %s state to %s\n", displayHarness(*harness), result.Destination)
+	fmt.Printf("Sessions: %d restored", len(result.Restored))
+	if len(result.Unchanged) > 0 {
+		fmt.Printf(" · %d already present", len(result.Unchanged))
+	}
+	fmt.Println()
+	if *harness == "codex" {
+		fmt.Printf("Next:     codex resume %s (Codex finds the session by id; the session keeps its original working directory)\n",
+			codexResumeTarget(result))
+		return nil
+	}
+	fmt.Printf("Next:     cd %s && %s\n", *project, next)
+	return nil
+}
+
+// codexResumeTarget names the thread to resume after a Codex restore: the
+// thread ID when restore covered exactly one session, a placeholder otherwise.
+func codexResumeTarget(result localcontext.RestoreResult) string {
+	sessions := append(append([]string{}, result.Restored...), result.Unchanged...)
+	if len(sessions) == 1 {
+		if id := localcontext.CodexThreadID(sessions[0]); id != "" {
+			return id
+		}
+	}
+	return "<thread id>"
+}
+
+func restoreClaudeContext(store *localcontext.Store, name, project string, jsonOutput bool) error {
+	capture, destination, err := store.RestoreClaude(name, project, claudeConfigHome())
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
 		encoded, _ := json.MarshalIndent(struct {
 			localcontext.Capture
 			Destination string `json:"destination"`
@@ -429,7 +483,7 @@ func restoreContext(args []string) error {
 	}
 	fmt.Printf("Restored Claude state to %s\n", destination)
 	fmt.Printf("Sessions: %d\n", capture.Sessions)
-	fmt.Printf("Next:     cd %s && claude --resume\n", *project)
+	fmt.Printf("Next:     cd %s && claude --resume\n", project)
 	return nil
 }
 
@@ -983,6 +1037,44 @@ func claudeConfigHome() string {
 	return filepath.Join(home, ".claude")
 }
 
+func codexHome() string {
+	if configured := os.Getenv("CODEX_HOME"); configured != "" {
+		return configured
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".codex"
+	}
+	return filepath.Join(home, ".codex")
+}
+
+func piAgentDir() string {
+	if configured := os.Getenv("PI_CODING_AGENT_DIR"); configured != "" {
+		return expandHome(configured)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".pi", "agent")
+	}
+	return filepath.Join(home, ".pi", "agent")
+}
+
+// piSessionDir returns Pi's flat session directory override, if set.
+func piSessionDir() string {
+	return expandHome(os.Getenv("PI_CODING_AGENT_SESSION_DIR"))
+}
+
+func expandHome(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~"))
+}
+
 func printLocalContext(value localcontext.Manifest, jsonOutput bool) {
 	if jsonOutput {
 		encoded, _ := json.MarshalIndent(value, "", "  ")
@@ -1480,7 +1572,8 @@ Commands:
 		case "capture":
 			fmt.Print(`Usage: contextctl context capture NAME [options]
 
-Capture native Claude state for the current project into a filesystem context.
+Capture native Claude state for the current project into a filesystem context. Codex,
+OpenCode, and Pi state is captured by 'contextctl ctx attach'.
 
 Options:
   --project PATH         Override the current project directory
@@ -1511,11 +1604,21 @@ Options:
 		case "restore":
 			fmt.Print(`Usage: contextctl context restore NAME [options]
 
-Restore captured Claude state into the current project, which must have no existing state.
+Restore captured native state into the harness for the current project. Restore never
+overwrites existing local state: Claude requires an empty project state directory; Codex and Pi
+skip identical sessions and refuse differing ones; OpenCode refuses sessions that already exist.
+
+Codex writes to $CODEX_HOME/sessions, Pi to $PI_CODING_AGENT_DIR/sessions (or
+$PI_CODING_AGENT_SESSION_DIR), and OpenCode imports through 'opencode import'. Codex and Pi
+check every session before writing any, so a refusal leaves their state untouched; OpenCode
+keeps sessions imported before a failed import.
+
+--project does not change where Codex restores: Codex finds a session by thread ID, and the
+session keeps its original working directory.
 
 Options:
   --project PATH         Override the current destination project
-  --harness NAME         Agent harness (default claude)
+  --harness NAME         claude, codex, opencode, or pi (default claude)
   --json                 Print JSON
 `)
 		case "export":
