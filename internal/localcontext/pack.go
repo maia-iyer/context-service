@@ -28,7 +28,11 @@ type PackOptions struct {
 	Name string
 	// IncludeGit keeps .git entries, which are skipped by default.
 	IncludeGit bool
-	Limits     PackLimits
+	// IncludeClaude keeps .claude entries, which are skipped by default so
+	// agent-side bookkeeping (settings, skills, per-run notes) does not
+	// round-trip into the packed workspace.
+	IncludeClaude bool
+	Limits        PackLimits
 }
 
 // PackResult describes a packed bundle. Files, Bytes and Revision describe
@@ -94,6 +98,12 @@ func Pack(sourceDir, outputPath string, options PackOptions) (PackResult, error)
 			return nil
 		}
 		if entry.Name() == ".git" && !options.IncludeGit {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() == ".claude" && !options.IncludeClaude {
 			if entry.IsDir() {
 				return fs.SkipDir
 			}

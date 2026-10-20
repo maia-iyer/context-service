@@ -600,6 +600,7 @@ func packContext(args []string) error {
 	output := flags.String("output", "", "output .context file")
 	flags.StringVar(output, "o", "", "output .context file (shorthand)")
 	includeGit := flags.Bool("include-git", false, "keep .git entries")
+	includeClaude := flags.Bool("include-claude", false, "keep .claude entries")
 	jsonOutput := flags.Bool("json", false, "print JSON")
 	flags.Usage = func() { showHelp([]string{"context", "pack"}) }
 	directory, err := parseSingleArgument(flags, args, "directory")
@@ -611,7 +612,7 @@ func packContext(args []string) error {
 		return errors.New("an output file is required (-o FILE)")
 	}
 	result, err := localcontext.Pack(directory, *output, localcontext.PackOptions{
-		Type: *contextType, Name: *name, IncludeGit: *includeGit,
+		Type: *contextType, Name: *name, IncludeGit: *includeGit, IncludeClaude: *includeClaude,
 	})
 	if err != nil {
 		return err
@@ -1635,15 +1636,17 @@ Options:
 
 Bundle an ordinary directory as a workspace .context file for upload. Files are stored under
 workspace/. Owner-executable files keep mode 0755; other files are stored as 0644. Symbolic links
-and special files are rejected, and .git is skipped unless --include-git is set. The upload
-limits (10,000 entries, 256 MiB per file, 1 GiB expanded, 256 MiB compressed) are enforced
-while packing.
+and special files are rejected; .git is skipped unless --include-git is set, and .claude is
+skipped unless --include-claude is set (so agent-side settings, skills, and per-run notes do
+not round-trip into the packed workspace). The upload limits (10,000 entries, 256 MiB per
+file, 1 GiB expanded, 256 MiB compressed) are enforced while packing.
 
 Options:
   -o, --output FILE      Output file (required)
   --name NAME            Context name (default: the directory's base name)
   --type TYPE            Context type (default and only supported value: workspace)
   --include-git          Keep .git directories and files
+  --include-claude       Keep .claude directories and files
   --json                 Print JSON
 
 Example:

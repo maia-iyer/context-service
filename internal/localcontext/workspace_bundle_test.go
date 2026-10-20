@@ -176,6 +176,56 @@ func TestPackIncludeGitKeepsGitEntries(t *testing.T) {
 	}
 }
 
+func writeClaudeFixture(t *testing.T, root string) {
+	t.Helper()
+	for _, name := range []string{
+		".claude/settings.json",
+		".claude/skills/moca-delegate-task/SKILL.md",
+		"lib/.claude",
+	} {
+		target := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("content of "+name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPackSkipsClaudeEntriesByDefault(t *testing.T) {
+	directory := writeWorkspaceFixture(t)
+	writeClaudeFixture(t, directory)
+	bundlePath := filepath.Join(t.TempDir(), "demo.context")
+	if _, err := Pack(directory, bundlePath, PackOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for name := range bundleModes(t, bundlePath) {
+		if strings.Contains(name, ".claude") {
+			t.Errorf("bundle contains %s", name)
+		}
+	}
+}
+
+func TestPackIncludeClaudeKeepsClaudeEntries(t *testing.T) {
+	directory := writeWorkspaceFixture(t)
+	writeClaudeFixture(t, directory)
+	bundlePath := filepath.Join(t.TempDir(), "demo.context")
+	if _, err := Pack(directory, bundlePath, PackOptions{IncludeClaude: true}); err != nil {
+		t.Fatal(err)
+	}
+	modes := bundleModes(t, bundlePath)
+	for _, name := range []string{
+		"workspace/.claude/settings.json",
+		"workspace/.claude/skills/moca-delegate-task/SKILL.md",
+		"workspace/lib/.claude",
+	} {
+		if _, ok := modes[name]; !ok {
+			t.Errorf("bundle omitted %s", name)
+		}
+	}
+}
+
 func TestPackRejectsUnsupportedInput(t *testing.T) {
 	directory := writeWorkspaceFixture(t)
 	output := t.TempDir()
